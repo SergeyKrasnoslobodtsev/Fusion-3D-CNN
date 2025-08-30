@@ -1,0 +1,32 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "Fusion3DNet"
+version = "0.0.1"
+description = "\u042d\u0442\u043e\u0442 \u043f\u0440\u043e\u0435\u043a\u0442 \u0432\u0434\u043e\u0445\u043d\u043e\u0432\u043b\u0435\u043d \u0438\u0434\u0435\u0439 \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435\u043c \u043c\u0443\u043b\u044c\u0442\u0438\u043c\u043e\u0434\u0430\u043b\u044c\u043d\u043e\u0439 \u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u044b \u0434\u043b\u044f \u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0432\u0430\u043d\u0438\u044f \u0438 \u043f\u043e\u0438\u0441\u043a\u0430 3D-\u043c\u043e\u0434\u0435\u043b\u0435\u0439 \u0432 \u0444\u043e\u0440\u043c\u0430\u0442\u0435 CAD"
+authors = [
+  { name = "Krasnoslobodtsev Sergey" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+requires-python = "~=3.11.0"
+
+
+[tool.ruff]
+line-length = 99
+src = ["Fusion3DNet"]
+include = ["pyproject.toml", "Fusion3DNet/**/*.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]  # Add import sorting
+
+[tool.ruff.lint.isort]
+known-first-party = ["Fusion3DNet"]
+force-sort-within-sections = true
+

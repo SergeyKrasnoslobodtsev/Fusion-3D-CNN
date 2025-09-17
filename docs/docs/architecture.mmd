@@ -1,0 +1,94 @@
+flowchart TD
+
+%% ====== БЛОКИ ======
+    STEP["STEP/B-Rep (CAD)"]
+
+    subgraph FEATS ["Признаки"]
+        FACES["faces (тип, площадь, кривизна)"]
+        EDGES["edges (тип, длина, радиус)"]
+        COEDGES["coedges (next, prev, mate)"]
+        UVTILES["UV-тайлы граней (128×128)"]
+        ATTR_JSON["CAD annotation (JSON)"]
+        TXT_PROMPT["Text prompt (авто-описания из JSON)"]
+    end
+
+    subgraph ENC3D ["3D-энкодер"]
+        UV_ENC["UV-поток (CNN)"]
+        BREPNET["BRep-граф (GNN/GAT)"]
+        FUSION["Fusion (concat/MLP)"]
+        GNN_REFINE["Граф-уточнение (GAT)"]
+        Z_FACE["z_face (per-face)"]
+        MIL_POOL["Attention/MIL-pooling"]
+        Z_MODEL["z_model (global)"]
+    end
+
+    subgraph ENCTXT ["Текст-энкодер"]
+        TXT_ENC["Transformer"]
+        Z_TXT["z_txt"]
+    end
+
+    subgraph LOSSES ["Обучение"]
+        PROJ3D["Проекция 3D (MLP)"]
+        PROJTXT["Проекция текст (MLP)"]
+        L_CLIP["L_clip (InfoNCE z_model↔z_txt)"]
+        L_SSL3D["L_ssl3d (self-supervised на гранях)"]
+    end
+
+    subgraph RETRIEVAL ["Поиск по моделям"]
+        FAISS["ANN индекс (z_model)"]
+        RERANK["Re-rank (фильтры из JSON)"]
+    end
+
+    subgraph INMODEL ["Поиск внутри модели"]
+        SCORE["Cosine (z_face, z_txt) + сглаживание по графу"]
+        HEATMAP["Heatmap (per-face)"]
+    end
+
+    subgraph DIFF ["Выравнивание и сравнение"]
+        NORMPOSE["Нормировка позы (центр, масштаб, PCA)"]
+        ALIGN["RANSAC→ICP (feature-based)"]
+        MATCH["Matching граней (Hungarian, cost=1−cos+параметры+топология)"]
+        REPORT["Отчёт (added/removed/changed)"]
+    end
+
+%% ====== СВЯЗИ ======
+    STEP --> FACES
+    STEP --> EDGES
+    STEP --> COEDGES
+    STEP --> UVTILES
+    STEP --> ATTR_JSON
+    ATTR_JSON --> TXT_PROMPT
+
+    FACES --> BREPNET
+    EDGES --> BREPNET
+    COEDGES --> BREPNET
+    UVTILES --> UV_ENC
+    UV_ENC --> FUSION
+    BREPNET --> FUSION
+    FUSION --> GNN_REFINE
+    GNN_REFINE --> Z_FACE
+    Z_FACE --> MIL_POOL
+    MIL_POOL --> Z_MODEL
+
+    TXT_PROMPT --> TXT_ENC
+    TXT_ENC --> Z_TXT
+
+    Z_MODEL --> PROJ3D
+    Z_TXT  --> PROJTXT
+    PROJ3D --> L_CLIP
+    PROJTXT --> L_CLIP
+
+    Z_FACE --> L_SSL3D
+
+    Z_MODEL --> FAISS
+    ATTR_JSON --> RERANK
+    FAISS --> RERANK
+
+    Z_FACE --> SCORE
+    Z_TXT  --> SCORE
+    SCORE  --> HEATMAP
+
+    Z_FACE --> NORMPOSE
+    NORMPOSE --> ALIGN
+    ALIGN --> MATCH
+    MATCH --> REPORT

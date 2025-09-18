@@ -47,22 +47,24 @@ class ContrastiveFusionModel(pl.LightningModule):
         }
     
     def _compute_contrastive_loss(self, dino_embed: torch.Tensor, brep_embed: torch.Tensor) -> torch.Tensor:
-        """Вычисляет симметричную контрастивную потерю (как в CLIP)."""
-        # L2-нормализация эмбеддингов
-        dino_embed_norm = F.normalize(dino_embed, p=2, dim=1)
-        brep_embed_norm = F.normalize(brep_embed, p=2, dim=1)
+        """Контрастивное обучение: объекты из одного батча должны быть ПОХОЖИ между модальностями."""
         
-        # Матрица косинусного сходства [B, B]
-        logits = torch.matmul(dino_embed_norm, brep_embed_norm.T) / self.temperature
-
+        # L2-нормализация
+        dino_norm = F.normalize(dino_embed, p=2, dim=1)
+        brep_norm = F.normalize(brep_embed, p=2, dim=1)
+        
+        # Матрица сходства [B, B]
+        logits = torch.matmul(dino_norm, brep_norm.T) / self.temperature
+        
+        # Целевые метки - диагональные элементы
         batch_size = dino_embed.size(0)
         target = torch.arange(batch_size, device=logits.device)
         
-        loss_dino_to_brep = F.cross_entropy(logits, target)
-        loss_brep_to_dino = F.cross_entropy(logits.T, target)
+        # Потеря для сближения DINO[i] и BRep[i]
+        loss_d2b = F.cross_entropy(logits, target)
+        loss_b2d = F.cross_entropy(logits.T, target)
         
-        loss = 0.5 * (loss_dino_to_brep + loss_brep_to_dino)
-        return loss
+        return 0.5 * (loss_d2b + loss_b2d)
 
     def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
         # Получаем эмбеддинги
@@ -108,3 +110,66 @@ class ContrastiveFusionModel(pl.LightningModule):
                 "interval": "step", # Обновлять на каждом шаге
             },
         }
+    
+
+
+class ClusteringFusionModel(pl.LightningModule):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.dino_encoder = DINOEncoder(input_dim=384, embed_dim=256)
+        self.brep_encoder = BRepEncoder(input_dim=7, embed_dim=256)
+        
+        # Проекционная голова для контрастивного обучения
+        self.projection_head = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128)
+        )
+    
+    def forward(self, batch):
+        # Получаем эмбеддинги
+        dino_embed = self.dino_encoder(batch['views'])
+        brep_embed = self.brep_encoder(batch['face_matrix'])
+        
+        # Простая фузия (конкатенация)
+        fused = torch.cat([dino_embed, brep_embed], dim=1)  # [B, 512]
+        
+        # Проекция для контрастивного обучения
+        projection = self.projection_head(fused)
+        projection = F.normalize(projection, p=2, dim=1)
+        
+        return {
+            'embeddings': fused,
+            'projections': projection
+        }
+    
+
+    def training_step(self, batch, batch_idx):
+        outputs = self.forward(batch)
+        
+        # Если есть псевдо-метки из кластеризации
+        if 'pseudo_labels' in batch:
+            loss = self._compute_cluster_loss(outputs['projections'], batch['pseudo_labels'])
+        else:
+            # Fallback: простая реконструкция
+            loss = self._compute_reconstruction_loss(outputs, batch)
+        
+        self.log('train_loss', loss)
+        return loss
+    
+    def _compute_cluster_loss(self, projections, pseudo_labels):
+        """InfoNCE loss с псевдо-метками"""
+        similarities = torch.matmul(projections, projections.T) / 0.1
+        
+        # Маска для позитивных пар (одинаковые псевдо-метки)
+        labels = pseudo_labels.unsqueeze(1)
+        mask = (labels == labels.T).float()
+        mask.fill_diagonal_(0)  # Убираем автосходство
+        
+        # InfoNCE
+        exp_similarities = torch.exp(similarities)
+        pos_similarities = (exp_similarities * mask).sum(dim=1)
+        all_similarities = exp_similarities.sum(dim=1)
+        
+        loss = -torch.log(pos_similarities / (all_similarities + 1e-8))
+        return loss.mean()

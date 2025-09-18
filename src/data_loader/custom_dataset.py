@@ -19,7 +19,6 @@ def append_to_stats(arr, stats):
         for j in range(num_features):
             stats[j].push(arr[i, j])
 
-# This function to standardize features is similar to what we do in the dataloader
 def standardize_features(feature_tensor, stats):
     num_features = len(stats)
     assert feature_tensor.shape[1] == num_features

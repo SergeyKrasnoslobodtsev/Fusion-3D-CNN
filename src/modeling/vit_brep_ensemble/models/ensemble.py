@@ -84,6 +84,27 @@ class ContrastiveFusionModel(pl.LightningModule):
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        return optimizer
+    def configure_optimizers(self): # type: ignore
+        """Настраиваем оптимизатор и планировщик скорости обучения."""
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.learning_rate, # type: ignore
+            weight_decay=1e-3  
+        )
+        
+        # Добавляем косинусный планировщик
+        # T_max - это общее количество шагов обучения
+        # Предполагаем, что trainer.max_epochs доступно, если нет, можно задать вручную
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=self.trainer.estimated_stepping_batches, # type: ignore
+            eta_min=1e-6 # Минимальная скорость обучения
+        )
+        
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step", # Обновлять на каждом шаге
+            },
+        }

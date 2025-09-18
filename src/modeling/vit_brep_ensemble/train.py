@@ -11,7 +11,7 @@ def main():
     BATCH_SIZE = 32
     LEARNING_RATE = 1e-4
     EMBED_DIM = 256
-    EPOCHS = 10
+    EPOCHS = 100
 
     # Пути к данным
     brep_features_dir = INTERIM_DATA_DIR / "features/brepnet"

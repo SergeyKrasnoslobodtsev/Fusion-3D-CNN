@@ -15,7 +15,7 @@ class DINOEncoder(nn.Module):
             embed_dim=embed_dim,
             num_heads=8,
             batch_first=True,
-            dropout=0.1
+            dropout=0.3
         )
         self.norm = nn.LayerNorm(embed_dim)
 

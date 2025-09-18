@@ -15,7 +15,7 @@ class BRepEncoder(nn.Module):
         nhead: int = 8,
         num_layers: int = 4,
         dim_feedforward: int = 1024,
-        dropout: float = 0.1,
+        dropout: float = 0.3,
     ):
         """
         Args:

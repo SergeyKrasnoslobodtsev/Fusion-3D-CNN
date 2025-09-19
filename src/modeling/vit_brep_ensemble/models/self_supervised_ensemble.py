@@ -124,8 +124,8 @@ class SelfSupervisedFusionModel(pl.LightningModule):
         embed_dim: int = 256,
         learning_rate: float = 1e-4,
         temperature: float = 0.1,
-        num_clusters: int = 50,
-        cluster_update_freq: int = 5,  # Обновлять кластеры каждые N эпох
+        num_clusters: int = 10,
+        cluster_update_freq: int = 5,  
     ):
         super().__init__()
         self.save_hyperparameters()

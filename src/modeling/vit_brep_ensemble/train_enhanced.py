@@ -12,11 +12,11 @@ def main():
     config = {
         'batch_size': 64,  # Увеличиваем для лучшей кластеризации
         'learning_rate': 5e-5,  # Уменьшаем для стабильности
-        'embed_dim': 256,
-        'temperature': 0.1,
-        'num_clusters': 50,
+        'embed_dim': 512,
+        'temperature': 0.02,
+        'num_clusters': 10,
         'epochs': 200,
-        'num_workers': 8,
+        'num_workers': 0,
     }
 
     # Пути к данным

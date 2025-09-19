@@ -4,7 +4,7 @@ from typing import Optional, Union
 from pathlib import Path
 
 import pytorch_lightning as pl
-from torch_geometric.loader import DataLoader as PyGDataLoader
+from torch_geometric.loader import DataLoader
 
 from .brep_dataset import BRepNPZDataset
 
@@ -60,23 +60,23 @@ class BRepDataModule(pl.LightningDataModule):
         self.ds_val = BRepNPZDataset(self.data_dir, file_filter=select(val_files))
         self.ds_test = BRepNPZDataset(self.data_dir, file_filter=select(test_files))
 
-    def train_dataloader(self) -> PyGDataLoader:
+    def train_dataloader(self) -> DataLoader:
         assert self.ds_train is not None
-        return PyGDataLoader(
+        return DataLoader(
             self.ds_train, batch_size=self.batch_size, shuffle=True,
-            num_workers=self.num_workers, pin_memory=True
+            num_workers=self.num_workers
         )
 
-    def val_dataloader(self) -> PyGDataLoader:
+    def val_dataloader(self) -> DataLoader:
         assert self.ds_val is not None
-        return PyGDataLoader(
+        return DataLoader(
             self.ds_val, batch_size=self.batch_size, shuffle=False,
-            num_workers=self.num_workers, pin_memory=True
+            num_workers=self.num_workers
         )
 
-    def test_dataloader(self) -> PyGDataLoader:
+    def test_dataloader(self) -> DataLoader:
         assert self.ds_test is not None
-        return PyGDataLoader(
+        return DataLoader(
             self.ds_test, batch_size=self.batch_size, shuffle=False,
-            num_workers=self.num_workers, pin_memory=True
+            num_workers=self.num_workers
         )

@@ -61,7 +61,13 @@ def run(
         dirpath=MODELS_DIR / "ssl_brep",
         filename="ssl-brep-{epoch:02d}-{val_infoNCE_acc:.3f}"
     )
-    trainer = pl.Trainer(max_epochs=epochs, callbacks=[ckpt], logger=[csv_logger], log_every_n_steps=10)
+    trainer = pl.Trainer(
+        max_epochs=epochs,
+        gradient_clip_val=1.0,
+        gradient_clip_algorithm="norm",
+        callbacks=[ckpt], 
+        logger=[csv_logger], 
+        log_every_n_steps=10)
 
     trainer.fit(model, dm)
 

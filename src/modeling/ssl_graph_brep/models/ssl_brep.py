@@ -37,6 +37,7 @@ class SSLBRepModule(pl.LightningModule):
         self.projector = nn.Sequential(
             nn.Linear(2 * hidden, 2 * hidden),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=0.25),
             nn.Linear(2 * hidden, proj_dim),
         )
         self.norm = CoedgeLCSNormalize(apply_reverse=True, renorm_vectors=False)
@@ -71,33 +72,55 @@ class SSLBRepModule(pl.LightningModule):
         return z_dict
 
     def _contrastive_loss(self, z1: Tensor, z2: Tensor) -> Tensor:
-        # единая реализация NT‑Xent с настраиваемой температурой
         p1 = nn.functional.normalize(self.projector(z1), dim=-1)
         p2 = nn.functional.normalize(self.projector(z2), dim=-1)
-        logits = (p1 @ p2.t()) / self.tau
         labels = torch.arange(p1.size(0), device=p1.device)
-        return nn.functional.cross_entropy(logits, labels)
+
+        logits12 = (p1 @ p2.t()) / self.tau
+        logits21 = (p2 @ p1.t()) / self.tau
+
+        loss12 = nn.functional.cross_entropy(logits12, labels)
+        loss21 = nn.functional.cross_entropy(logits21, labels)
+        return 0.5 * (loss12 + loss21), logits12, labels
+
+    def _two_views_stable(self, batch, p: float):
+        # глубокая копия без изменения порядка/количества узлов
+        import copy
+        v1 = copy.deepcopy(batch)
+        v2 = copy.deepcopy(batch)
+        if p > 0.0 and self.training:
+            # легкий джиттер по фичам (xyz) в LCS; порядок и размеры НЕ трогаем
+            def _jitter_grid(g, sigma=0.01):
+                g[:, 0:3, :] = g[:, 0:3, :] + sigma * torch.randn_like(g[:, 0:3, :])
+                return g
+            v1["coedge"].grid = _jitter_grid(v1["coedge"].grid)
+            v2["coedge"].grid = _jitter_grid(v2["coedge"].grid)
+            # можно добавить очень мягкий noise для face.uv
+            v1["face"].uv = v1["face"].uv + 0.01 * torch.randn_like(v1["face"].uv)
+            v2["face"].uv = v2["face"].uv + 0.01 * torch.randn_like(v2["face"].uv)
+        return v1, v2
 
     def training_step(self, batch: HeteroData, _: int) -> Tensor:
         
-        v1, v2 = two_views(batch, p=self.aug_p)
+        v1, v2 = self._two_views_stable(batch, p=self.aug_p)
 
         
         z1d = self._embed(v1)
         z2d = self._embed(v2)
 
         # контраст
-        loss_con = self._contrastive_loss(z1d["coedge"], z2d["coedge"])
-        p1 = torch.nn.functional.normalize(self.projector(z1d["coedge"]), dim=-1)
-        p2 = torch.nn.functional.normalize(self.projector(z2d["coedge"]), dim=-1)
-        logits = (p1 @ p2.t()) / self.tau
-        labels = torch.arange(p1.size(0), device=p1.device)
-        info_acc = (logits.argmax(dim=1) == labels).float().mean()
+        loss_con, logits_con, labels_con = self._contrastive_loss(z1d["coedge"], z2d["coedge"])
+
+        if logits_con.numel() == 0:
+            info_acc = torch.tensor(0.0, device=loss_con.device)
+        else:
+            labels = torch.arange(logits_con.size(0), device=logits_con.device)
+            info_acc = (logits_con.argmax(dim=1) == labels).float().mean()
 
         # топологические предтексты с настраиваемой температурой
-        co_batch = batch["coedge"].batch
-        next_ei = batch[("coedge","next","coedge")].edge_index
-        mate_ei = batch[("coedge","mate","coedge")].edge_index
+        co_batch = v1["coedge"].batch
+        next_ei = v1[("coedge","next","coedge")].edge_index
+        mate_ei = v1[("coedge","mate","coedge")].edge_index
         tgt_next = build_target_from_edge_index(next_ei, z1d["coedge"].size(0))
         tgt_mate = build_target_from_edge_index(mate_ei, z1d["coedge"].size(0))
 
@@ -116,7 +139,7 @@ class SSLBRepModule(pl.LightningModule):
                 + self.lambda_topo_mate * loss_mate
         )
 
-        bsz = num_graphs_in_batch(batch)
+        bsz = num_graphs_in_batch(v1)
         self.log_dict({
             "train_loss": loss,
             "train_loss_con": loss_con,
@@ -131,53 +154,56 @@ class SSLBRepModule(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self, batch: HeteroData, _: int) -> None:
         # Аугментации: такие же, как в train (или p=0.0 для «чистой» оценки)
-        v1, v2 = two_views(batch, p=self.aug_p)
+        v1, v2 = self._two_views_stable(batch, p=0.0)
 
-        # Эмбеддинги
+        v1, v2 = self._two_views_stable(batch, p=self.aug_p)
+
+        
         z1d = self._embed(v1)
         z2d = self._embed(v2)
 
-        # Контрастная часть (val/loss_con) и accuracy
-        val_loss_con = self._contrastive_loss(z1d["coedge"], z2d["coedge"])
-        p1 = torch.nn.functional.normalize(self.projector(z1d["coedge"]), dim=-1)
-        p2 = torch.nn.functional.normalize(self.projector(z2d["coedge"]), dim=-1)
-        logits = (p1 @ p2.t()) / self.tau
-        labels = torch.arange(p1.size(0), device=p1.device)
-        val_info_acc = (logits.argmax(dim=1) == labels).float().mean()
+        # контраст
+        loss_con, logits_con, labels_con = self._contrastive_loss(z1d["coedge"], z2d["coedge"])
 
-        # Топологические предтексты (val/loss_next, val/loss_mate) и topo@1
-        co_batch = batch["coedge"].batch
-        next_ei = batch[("coedge","next","coedge")].edge_index
-        mate_ei = batch[("coedge","mate","coedge")].edge_index
+        if logits_con.numel() == 0:
+            info_acc = torch.tensor(0.0, device=loss_con.device)
+        else:
+            labels = torch.arange(logits_con.size(0), device=logits_con.device)
+            info_acc = (logits_con.argmax(dim=1) == labels).float().mean()
+
+        # топологические предтексты с настраиваемой температурой
+        co_batch = v1["coedge"].batch
+        next_ei = v1[("coedge","next","coedge")].edge_index
+        mate_ei = v1[("coedge","mate","coedge")].edge_index
         tgt_next = build_target_from_edge_index(next_ei, z1d["coedge"].size(0))
         tgt_mate = build_target_from_edge_index(mate_ei, z1d["coedge"].size(0))
 
-        val_loss_next, val_topo_next = graph_pointer_ce(
+        loss_next, acc_next = graph_pointer_ce(
             z1d["coedge"], co_batch, tgt_next, self.scorer_next, temperature=self.topo_tau
         )
-        val_loss_mate, val_topo_mate = graph_pointer_ce(
+        loss_mate, acc_mate = graph_pointer_ce(
             z1d["coedge"], co_batch, tgt_mate, self.scorer_mate, temperature=self.topo_tau
         )
 
 
-        val_loss = (
-
-            val_loss_con
-                + self.lambda_topo_next * val_loss_next
-                + self.lambda_topo_mate * val_loss_mate
+        loss = (
+        
+            loss_con 
+                + self.lambda_topo_next * loss_next 
+                + self.lambda_topo_mate * loss_mate
         )
 
-        # 6) Логирование на уровне эпохи
+
         bsz = num_graphs_in_batch(batch)
         self.log_dict({
-            "val_loss": val_loss,
-            "val_loss_con": val_loss_con,
-            "val_loss_next": val_loss_next,
-            "val_loss_mate": val_loss_mate,
-            "val_infoNCE_acc": val_info_acc,
-            "val_topo_next_top1": val_topo_next,
-            "val_topo_mate_top1": val_topo_mate,
-        }, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=bsz)
+            "val_loss": loss,
+            "val_loss_con": loss_con,
+            "val_loss_next": loss_next,
+            "val_loss_mate": loss_mate,
+            "val_infoNCE_acc": info_acc,
+            "val_topo_next_top1": acc_next,
+            "val_topo_mate_top1": acc_mate,
+        }, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=bsz)
 
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)

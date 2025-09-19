@@ -63,7 +63,9 @@ def graph_pointer_ce(
         map_local = {int(idx[k]): k for k in range(idx.numel())}
         tgt_local = torch.tensor([map_local[int(j)] for j in tgt_idx.tolist()],
                                  device=z.device, dtype=torch.long)
-        loss_sum = loss_sum + nn.functional.cross_entropy(logits, tgt_local)
+        loss_sum = loss_sum + nn.functional.cross_entropy(
+                        logits, tgt_local, reduction='sum'
+                    )
 
         pred = logits.argmax(dim=1)
         correct += (pred == tgt_local).sum().item()

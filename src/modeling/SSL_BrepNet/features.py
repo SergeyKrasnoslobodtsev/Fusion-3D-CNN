@@ -1,7 +1,6 @@
 
 import numpy as np
 
-
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.STEPControl import STEPControl_Reader
 from OCC.Extend import TopologyUtils
@@ -21,26 +20,20 @@ from OCC.Core.GeomAbs import (GeomAbs_Plane, GeomAbs_Cylinder, GeomAbs_Cone,
 
 from OCC.Core.BRepGProp import brepgprop
 
-from OCC.Core.gp import gp_Pnt2d, gp_Dir2d, gp_Ax2d
-from OCC.Core.Geom2d import Geom2d_Line
-from OCC.Core.Geom2dAPI import Geom2dAPI_ProjectPointOnCurve
-from OCC.Core.BRepClass import BRepClass_FaceClassifier
-from OCC.Core.TopAbs import TopAbs_IN
-
-from sklearn.neighbors import KDTree
 
 # occwl
 from occwl.edge_data_extractor import EdgeDataExtractor, EdgeConvexity
 from occwl.edge import Edge
 from occwl.face import Face
 from occwl.solid import Solid
+from occwl.vertex import Vertex
 from occwl.uvgrid import uvgrid
 
 # BRepNet
 from .entity_mapper import EntityMapper
 
-from ..utils.scale_utils import scale_solid_to_unit_box 
-from ..utils.create_occwl_from_occ import create_occwl
+from ...utils.scale_utils import scale_solid_to_unit_box 
+from ...utils.create_occwl_from_occ import create_occwl
 
 class BRepNetExtractor:
     def __init__(self, step_file, output_dir, feature_schema, scale_body=True):
@@ -48,6 +41,8 @@ class BRepNetExtractor:
         self.output_dir = output_dir
         self.feature_schema = feature_schema
         self.scale_body = scale_body
+        self.uv_sample_resolution = 128
+        self.n_sdf_samples_per_face = 500
 
 
     def process(self):
@@ -78,6 +73,7 @@ class BRepNetExtractor:
             return
 
         entity_mapper = EntityMapper(body)
+        
 
         face_features = self.extract_face_features_from_body(body, entity_mapper)
         edge_features = self.extract_edge_features_from_body(body, entity_mapper)
@@ -103,7 +99,10 @@ class BRepNetExtractor:
             coedge_point_grids
         )
 
-
+        vertex = self.extract_vertex_features_from_body(body, entity_mapper)
+        edge_to_vertex = self.extract_edge_to_vertex(body, entity_mapper)
+        face_to_edge = self.extract_face_to_edge(face, edge)
+        face_to_face = self.extract_face_to_face(mate, face)
 
         output_pathname = self.output_dir / f"{self.step_file.stem}.npz"
         np.savez_compressed(
@@ -119,7 +118,11 @@ class BRepNetExtractor:
             next=next, 
             mate=mate, 
             face=face, 
-            edge=edge
+            edge=edge,
+            vertex=vertex,
+            edge_to_vertex=edge_to_vertex,
+            face_to_edge=face_to_edge,
+            face_to_face=face_to_face
         )
 
 
@@ -134,6 +137,77 @@ class BRepNetExtractor:
         reader.TransferRoots()
         shape = reader.OneShape()
         return shape
+    
+    def extract_face_to_face(self, mate, coedge_to_face):
+        """
+        Извлекает face_to_face: [2, num_face_pairs], где каждая колонка - пара соседних граней.
+        """
+        num_coedges = mate.size
+        face_pairs = []
+        for coedge_idx in range(num_coedges):
+            face_idx = coedge_to_face[coedge_idx]
+            mate_idx = mate[coedge_idx]
+            mate_face_idx = coedge_to_face[mate_idx]
+            if face_idx != mate_face_idx:  # Только соседние грани
+                face_pairs.append([face_idx, mate_face_idx])
+        face_to_face = np.array(face_pairs, dtype=np.uint32).T  # [2, num_pairs]
+        # Удалить дубликаты для undirected графа (опционально)
+        face_to_face = np.unique(np.sort(face_to_face, axis=0), axis=1)
+        return face_to_face
+
+
+    def extract_face_to_edge(self, coedge_to_face, coedge_to_edge):
+        """
+        Извлекает face_to_edge: [2, num_coedges], где [0, i] - edge_idx, [1, i] - face_idx.
+        """
+        num_coedges = len(coedge_to_edge)
+        face_to_edge = np.zeros((2, num_coedges), dtype=np.uint32)
+        face_to_edge[0, :] = coedge_to_edge  # Индекс ребра для coedge
+        face_to_edge[1, :] = coedge_to_face  # Индекс грани для coedge
+        return face_to_edge
+
+
+    def extract_vertex_features_from_body(self, body, entity_mapper):
+        """
+        Извлекает признаки вершин из тела (body). 
+        Для каждой вершины возвращает 3D-координаты [x, y, z].
+        Возвращает np.array [num_vertices, 3].
+        """
+        topexp = TopologyUtils.TopologyExplorer(body, ignore_orientation=True)
+        vertex_features = []
+        
+        for vertex in topexp.vertices():  
+            assert len(vertex_features) == entity_mapper.vertex_index(vertex) 
+            occwl_vertex = Vertex(vertex)  
+            coords = occwl_vertex.point()  
+            vertex_features.append(coords)
+    
+        return np.stack(vertex_features)
+
+    def extract_edge_to_vertex(self, body, entity_mapper: EntityMapper):
+        """
+        Извлекает edge_to_vertex: [2, num_edges], где [0, i] - start vertex, [1, i] - end vertex.
+        """
+        top_exp = TopologyUtils.TopologyExplorer(body, ignore_orientation=True)
+        num_edges = entity_mapper.get_nr_of_edges() 
+        edge_to_vertex = np.zeros((2, num_edges), dtype=np.uint32)
+
+        for edge in top_exp.edges():
+            edge_idx = entity_mapper.edge_index(edge)
+            vertices = list(top_exp.vertices_from_edge(edge))
+            if len(vertices) == 2:
+                start_idx = entity_mapper.vertex_index(vertices[0])
+                end_idx = entity_mapper.vertex_index(vertices[1])
+            elif len(vertices) == 1:
+                # Вырожденное ребро: обе вершины совпадают
+                start_idx = end_idx = entity_mapper.vertex_index(vertices[0])
+            else:
+                print(f"Edge {edge_idx}: {len(vertices)} vertices, skipping.")
+                continue
+            edge_to_vertex[0, edge_idx] = start_idx  # Стартовая вершина
+            edge_to_vertex[1, edge_idx] = end_idx    # Конечная вершина
+
+        return edge_to_vertex
 
     def extract_face_features_from_body(self, body, entity_mapper):
         """
@@ -847,3 +921,9 @@ class BRepNetExtractor:
         return True
 
     
+   
+
+
+
+
+

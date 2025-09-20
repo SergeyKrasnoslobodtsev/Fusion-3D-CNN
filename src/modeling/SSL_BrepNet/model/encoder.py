@@ -2,7 +2,7 @@ import torch
 from torch.nn import Linear, Sequential, ModuleList, BatchNorm1d, Dropout, LeakyReLU, ReLU
 from typing import List
 
-from ..dataset_loader import BRepData
+from ..dataset import BRepData
 
 
 class CustomBRepEncoder(torch.nn.Module):

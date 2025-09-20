@@ -12,7 +12,7 @@ try:
 except ImportError as e:
     raise ImportError("PyTorch Lightning is required. Please install 'pytorch-lightning'.")
 
-from .dataset_loader import ReconstructionDataset, BatchOnlyCollator
+from .dataset import ReconstructionDataset, BatchOnlyCollator
 from .model.encoder import CustomBRepEncoder
 from .model.decoder import ConditionalDecoder
 

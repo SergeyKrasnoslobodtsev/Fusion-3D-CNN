@@ -16,10 +16,55 @@ class BrepNetStandardizer:
             data = json.load(f)
         
         self.feature_standardization = data['feature_standardization']
-        # Try to read stats for edges/faces if provided in alternative naming
-        self._stats_edges = self.feature_standardization.get('edge_features') or self.feature_standardization.get('edges')
-        self._stats_faces = self.feature_standardization.get('face_features') or self.feature_standardization.get('faces')
-        
+        self._stats_edges = self.feature_standardization.get('edge_features') 
+        self._stats_faces = self.feature_standardization.get('face_features') 
+        self._stats_coedges = self.feature_standardization.get('coedge_features')
+
+    def standardize_coedge_features(
+        self, 
+        feature_tensor: np.ndarray
+    ) -> np.ndarray:
+        """
+        Стандартизация признаков для coedge - точная копия из вашего блокнота
+
+        Args:
+            feature_tensor: [num_entities, num_features] - сырые признаки
+
+        Returns:
+            standardized_tensor: [num_entities, num_features] - стандартизированные признаки
+        """
+        return self.standardize_features(feature_tensor, self._stats_coedges)
+    
+    def standardize_edge_features(
+        self, 
+        feature_tensor: np.ndarray
+    ) -> np.ndarray:
+        """
+        Стандартизация признаков для edge - точная копия из вашего блокнота
+
+        Args:
+            feature_tensor: [num_entities, num_features] - сырые признаки
+
+        Returns:
+            standardized_tensor: [num_entities, num_features] - стандартизированные признаки
+        """
+        return self.standardize_features(feature_tensor, self._stats_edges)
+    
+    def standardize_face_features(
+        self, 
+        feature_tensor: np.ndarray
+    ) -> np.ndarray:
+        """
+        Стандартизация признаков для face - точная копия из вашего блокнота
+
+        Args:
+            feature_tensor: [num_entities, num_features] - сырые признаки
+
+        Returns:
+            standardized_tensor: [num_entities, num_features] - стандартизированные признаки
+        """
+        return self.standardize_features(feature_tensor, self._stats_faces)
+
     def standardize_features(
         self, 
         feature_tensor: np.ndarray, 
@@ -43,7 +88,7 @@ class BrepNetStandardizer:
         eps = 1e-7
         
         for index, s in enumerate(stats):
-            assert s['standard_deviation'] > eps, "Feature has zero standard deviation"
+            assert s['standard_deviation'] < eps, "Feature has zero standard deviation"
             means[index] = s['mean']
             sds[index] = s['standard_deviation']
         
@@ -143,16 +188,3 @@ class BrepNetStandardizer:
         
         # Конкатенация face + pooled edge признаков
         return np.concatenate([face_features, face_edge_features], axis=1)
-
-    # Convenience API used by dataset_loader
-    def transform(self, features: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """
-        Standardize provided features dict with keys like 'edges' and 'faces'.
-        Unknown keys are passed through unchanged.
-        """
-        out = dict(features)
-        if 'edges' in features and self._stats_edges is not None:
-            out['edges'] = self.standardize_features(features['edges'], self._stats_edges)
-        if 'faces' in features and self._stats_faces is not None:
-            out['faces'] = self.standardize_features(features['faces'], self._stats_faces)
-        return out

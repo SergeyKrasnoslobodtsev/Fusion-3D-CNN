@@ -1,14 +1,11 @@
+import json
+import os
 import torch
 from torch.utils.data import Dataset
 import numpy as np
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Optional
 from dataclasses import dataclass
 
-from .normlization import BrepNetStandardizer
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from .model.encoder import CustomBRepEncoder
 
 @dataclass
 class BRepData:
@@ -23,56 +20,52 @@ class BRepData:
     face_to_face: torch.Tensor   # [2, num_face_connections]
     face_batch_idx: Optional[torch.Tensor] = None
 
-class BRepDataset(Dataset):
-    """
-    Dataset для загрузки и предобработки B-Rep данных.
-    """
-    def __init__(self, 
-                 data_dir: str, 
-                 split: str, 
-                 encoder: 'CustomBRepEncoder', 
-                 standardizer: Optional[BrepNetStandardizer] = None):
-        """
-        Инициализация датасета.
+class BrepNetSSLDataset(Dataset):
+    def __init__(self, root_dir, stats_file='dataset.json', num_samples=10000):  # num_samples для SDF sampling
+        self.root_dir = root_dir
+        self.files = [f for f in os.listdir(root_dir) if f.endswith('.npz')]
+        with open(stats_file, 'r') as f:
+            stats = json.load(f)
+            # Из BRepNet: mean/std по каналам (адаптируй ключи, если отличаются)
+            self.vertex_mean = torch.tensor(stats['vertex_feature_means'])
+            self.vertex_std = torch.tensor(stats['vertex_feature_stds'])
+            self.edge_mean = torch.tensor(stats['edge_feature_means'])
+            self.edge_std = torch.tensor(stats['edge_feature_stds'])
+            self.face_mean = torch.tensor(stats['face_feature_means'])
+            self.face_std = torch.tensor(stats['face_feature_stds'])
+        self.num_samples = num_samples  # Для sampling points
 
-        Аргументы:
-            data_dir (str): Путь к директории с данными.
-            split (str): Раздел данных ('train', 'val', 'test').
-            encoder (CustomBRepEncoder): Энкодер для B-Rep данных.
-            standardizer (Optional[BrepNetStandardizer]): Стандартизатор для нормализации данных.
-        """
-        self.data_dir = Path(data_dir) / split
-        self.encoder = encoder
-        self.standardizer = standardizer
+    def __len__(self):
+        return len(self.files)
 
-        self.file_list = list(self.data_dir.glob('*.npz'))
-        if not self.file_list:
-            raise ValueError(f"No data files found in {self.data_dir}")
-
-    def __len__(self) -> int:
-        return len(self.file_list)
-
-    def __getitem__(self, idx: int) -> BRepData:
-        file_path = self.file_list[idx]
+    def __getitem__(self, idx):
+        file_path = os.path.join(self.root_dir, self.files[idx])
         data = np.load(file_path)
+        
+        # Загрузи признаки (формат BRepNet .npz)
+        vertices = torch.from_numpy(data['vertex_features']).float()  # [N, 3]
+        edges = torch.from_numpy(data['edge_features']).float()      # [M, 6]
+        faces = torch.from_numpy(data['face_features']).float()      # [K, 7]
+        
+        # Примени нормализацию (z-score)
+        vertices = (vertices - self.vertex_mean) / self.vertex_std
+        edges = (edges - self.edge_mean) / self.edge_std
+        faces = (faces - self.face_mean) / self.face_std
+        
+        # Генерация sampled_points и SDF (адаптируй из sampled_data.py)
+        # Здесь упрощенная версия; реализуй полный rasterization для твоих BRep
+        sampled_points = torch.rand(self.num_samples, 3) * 2 - 1  # Пример: [-1,1] bounding box
+        sdf = self.compute_sdf(sampled_points, vertices, edges, faces)  # Реализуй функцию SDF
+        
+        return {
+            'vertices': vertices,
+            'edges': edges,
+            'faces': faces,
+            'points': sampled_points,
+            'sdf': sdf
+        }
 
-        vertices = torch.tensor(data['vertices'], dtype=torch.float32)
-        edges = torch.tensor(data['edges'], dtype=torch.float32)
-        faces = torch.tensor(data['faces'], dtype=torch.float32)
-        edge_to_vertex = torch.tensor(data['edge_to_vertex'], dtype=torch.long)
-        face_to_edge = torch.tensor(data['face_to_edge'], dtype=torch.long)
-        face_to_face = torch.tensor(data['face_to_face'], dtype=torch.long)
-
-        if self.standardizer:
-            vertices = self.standardizer.standardize(vertices)
-
-        brep_data = BRepData(
-            vertices=vertices,
-            edges=edges,
-            faces=faces,
-            edge_to_vertex=edge_to_vertex,
-            face_to_edge=face_to_edge,
-            face_to_face=face_to_face
-        )
-
-        return brep_data
+    def compute_sdf(self, points, vertices, edges, faces):
+        # Реализуй дифференцируемый SDF на основе BRep (как в self-supervised репозитории)
+        # Пример заглушка: расстояние до ближайшей точки (замени на реальный)
+        return torch.norm(points - vertices.mean(dim=0), dim=1).unsqueeze(1)  # [num_samples, 1]

@@ -29,18 +29,18 @@ class CustomBRepEncoder(torch.nn.Module):
         x_e = self.embed_e_in(data.edges)
         x_f = self.embed_f_in(data.faces)
 
-        print("x_v shape:", x_v.shape)
-        print("x_e shape:", x_e.shape)
-        print("x_f shape:", x_f.shape)
-        print("data.edge_to_vertex:", data.edge_to_vertex)
-        print("data.face_to_edge:", data.face_to_edge)
+        # print("x_v shape:", x_v.shape)
+        # print("x_e shape:", x_e.shape)
+        # print("x_f shape:", x_f.shape)
+        # print("data.edge_to_vertex:", data.edge_to_vertex)
+        # print("data.face_to_edge:", data.face_to_edge)
 
         # 检查 face_to_edge 是否越界
         max_face_idx = data.face_to_edge[0].max().item()
         max_edge_idx = data.face_to_edge[1].max().item()
 
-        print("Max face index in face_to_edge:", max_face_idx)
-        print("Max edge index in face_to_edge:", max_edge_idx)
+        # print("Max face index in face_to_edge:", max_face_idx)
+        # print("Max edge index in face_to_edge:", max_edge_idx)
 
         if max_face_idx >= x_f.shape[0] or max_edge_idx >= x_e.shape[0]:
             raise IndexError(f"Index out of range: max_face_idx={max_face_idx}, max_edge_idx={max_edge_idx}")

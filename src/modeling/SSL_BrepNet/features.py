@@ -160,10 +160,16 @@ class BRepNetExtractor:
         """
         Извлекает face_to_edge: [2, num_coedges], где [0, i] - edge_idx, [1, i] - face_idx.
         """
-        num_coedges = len(coedge_to_edge)
-        face_to_edge = np.zeros((2, num_coedges), dtype=np.uint32)
-        face_to_edge[0, :] = coedge_to_edge  # Индекс ребра для coedge
-        face_to_edge[1, :] = coedge_to_face  # Индекс грани для coedge
+         # Создаем пары (индекс грани, индекс ребра)
+        face_edge_pairs = np.stack([coedge_to_face, coedge_to_edge], axis=1)
+        
+        # Находим уникальные пары, так как одно ребро может принадлежать одной грани
+        # через несколько co-edges (например, в случае замкнутых контуров внутри грани).
+        unique_face_edge_pairs = np.unique(face_edge_pairs, axis=0)
+        
+        # Транспонируем в нужный формат [2, num_unique_pairs]
+        face_to_edge = unique_face_edge_pairs.T.astype(np.uint32)
+        
         return face_to_edge
 
 

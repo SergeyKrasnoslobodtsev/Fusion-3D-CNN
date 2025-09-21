@@ -25,38 +25,44 @@ class CustomBRepEncoder(torch.nn.Module):
             self.attention_layers = ModuleList([gat_conv.GATConv(out_width, out_width//4, heads=4) for _ in range(num_layers)])
 
     def forward(self, data):
-        x_v = self.embed_v_in(data.vertices)
-        x_e = self.embed_e_in(data.edges)
-        x_f = self.embed_f_in(data.faces)
+        # эмбеддинги
+        x_v = self.embed_v_in(data['vertices'])
+        x_e = self.embed_e_in(data['edges'])
+        x_f = self.embed_f_in(data['faces'])
 
-        # print("x_v shape:", x_v.shape)
-        # print("x_e shape:", x_e.shape)
-        # print("x_f shape:", x_f.shape)
-        # print("data.edge_to_vertex:", data.edge_to_vertex)
-        # print("data.face_to_edge:", data.face_to_edge)
+        # ➜ санитайз сразу после эмбеддингов
+        def _sanitize(x: torch.Tensor) -> torch.Tensor:
+            # заменяем NaN/Inf и мягко клипуем, чтобы не закипала softmax в GAT
+            return torch.clamp(torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4), -1e4, 1e4)
 
-        # 检查 face_to_edge 是否越界
-        max_face_idx = data.face_to_edge[0].max().item()
-        max_edge_idx = data.face_to_edge[1].max().item()
+        x_v = _sanitize(x_v)
+        x_e = _sanitize(x_e)
+        x_f = _sanitize(x_f)
 
-        # print("Max face index in face_to_edge:", max_face_idx)
-        # print("Max edge index in face_to_edge:", max_edge_idx)
+        # индексы
+        e_v = data['edge_to_vertex'].long().contiguous()   # [2, Ne]
+        f_e = data['face_to_edge'].long().contiguous()     # [2, Nfe]
+        f_f = data['face_to_face'].long().contiguous()     # [2, Nff]
 
-        if max_face_idx >= x_f.shape[0] or max_edge_idx >= x_e.shape[0]:
-            raise IndexError(f"Index out of range: max_face_idx={max_face_idx}, max_edge_idx={max_edge_idx}")
+        # ➜ self-loops для лиц (защита внимания от пустых соседств)
+        nf = x_f.size(0)
+        if f_f.numel() == 0:
+            f_f = torch.empty(2, 0, dtype=torch.long, device=x_f.device)
+        loops = torch.arange(nf, device=x_f.device, dtype=torch.long)
+        f_f = torch.cat([f_f, torch.stack([loops, loops])], dim=1)
 
-        # Upward pass: propagate information from vertices to edges, and from edges to faces
-        x_e = self.V2E(x_v, x_e, data.edge_to_vertex[[1, 0]])
-        x_f = self.E2F(x_e, x_f, data.face_to_edge[[1, 0]])
+        # подъём признаков
+        x_e = _sanitize(self.V2E(x_v, x_e, e_v[[1, 0]]))
+        x_f = _sanitize(self.E2F(x_e, x_f, f_e[[1, 0]]))
 
-        # Refinement through additional message passing layers
+        # рефайнмент / внимание
         for i, layer in enumerate(self.message_layers):
             if self.use_attention:
-                x_f = self.attention_layers[i](x_f, data.face_to_face[:2, :])
+                x_f = _sanitize(self.attention_layers[i](_sanitize(x_f), f_f[:2, :]))
             else:
-                x_f = layer(x_f, x_f, data.face_to_face[:2, :])
+                x_f = _sanitize(layer(x_f, x_f, f_f[:2, :]))
 
-        return x_f  # Return the final face embeddings
+        return _sanitize(x_f) 
 
 class BipartiteResMRConv(torch.nn.Module):
     def __init__(self, width):
@@ -67,6 +73,7 @@ class BipartiteResMRConv(torch.nn.Module):
         diffs = torch.index_select(x_dst, 0, e[1]) - torch.index_select(x_src, 0, e[0])
         maxes = torch.full((x_dst.shape[0], diffs.shape[1]), float('-inf'), device=diffs.device)
         maxes = maxes.scatter_reduce(0, e[1].unsqueeze(-1).expand_as(diffs), diffs, reduce="amax", include_self=True)
+        maxes = torch.nan_to_num(maxes, neginf=0.0, posinf=0.0)
         return x_dst + self.mlp(torch.cat([x_dst, maxes], dim=1))
 
 # LinearBlock with flexibility for configurations

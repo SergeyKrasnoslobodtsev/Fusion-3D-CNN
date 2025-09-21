@@ -157,9 +157,12 @@ class EntityMapper:
     # методы построения карты
 
     def get_hash(self, ent: TopoDS_Shape) -> int:
-        """Вычисляет хэш сущности, приведенный к разумному диапазону."""
+        """Вычисляет хэш через TShape и Location."""
         intmax = 2147483647
-        return abs(hash(ent)) % intmax
+        tshape_hash = ent.TShape().__hash__()
+        location_hash = ent.Location().HashCode() 
+        combined = (tshape_hash, location_hash)
+        return abs(hash(combined)) % intmax
 
     def append_body(self, body: TopoDS_Shape) -> None:
         """Добавляет тело в карту и присваивает ему уникальный индекс."""

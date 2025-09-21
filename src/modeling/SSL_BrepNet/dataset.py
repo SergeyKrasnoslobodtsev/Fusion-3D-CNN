@@ -44,26 +44,41 @@ class BrepNetDataset(Dataset):
         D = np.load(brep_path, allow_pickle=True)
         S = np.load(sdf_path, allow_pickle=True)
 
+        f_e = torch.from_numpy(D["face_to_edge"].astype(np.int64))
+        if f_e.dim() == 2 and f_e.shape[0] != 2 and f_e.shape[1] == 2:
+            f_e = f_e.t()
+
+        uv = torch.from_numpy(S["uv_faces"].astype(np.float32))      # [F, 500, 2]
+        vals = torch.from_numpy(S["sdf_faces"].astype(np.float32))  # [F, 500]
+
+        mask_uv   = torch.isfinite(uv).all(dim=(1, 2))
+        mask_vals = torch.isfinite(vals).all(dim=1)
+        mask = mask_uv & mask_vals
+        # если все валидно — маска будет True везде
+        uv   = uv[mask]
+        vals = vals[mask]
+
         data = {
             "vertex": D["vertex"],
             "edge_features": D["edge_features"],
             "face_features": D["face_features"],
             "coedge_features": D["coedge_features"],
             "edge_to_vertex": D["edge_to_vertex"],
-            "face_to_edge": D["face_to_edge"],
+            "face_to_edge": f_e.contiguous(),
             "face_to_face": D["face_to_face"],
         }
         # Стандартизация только для обучающей выборки
         if self.feature_standardization is not None:
             data = standarize_data(data, self.feature_standardization)
-        return SimpleNamespace(
-            name=file_name,
-            vertices=torch.from_numpy(data["vertex"].astype(np.float32)),
-            edges=torch.from_numpy(data["edge_features"].astype(np.float32)),
-            faces=torch.from_numpy(data["face_features"].astype(np.float32)),
-            edge_to_vertex=torch.from_numpy(data["edge_to_vertex"].astype(np.int64)),
-            face_to_edge=torch.from_numpy(data["face_to_edge"][::-1].astype(np.int64)),
-            face_to_face=torch.from_numpy(data["face_to_face"].astype(np.int64)),
-            sdf_uv=torch.from_numpy(S["uv_faces"].astype(np.float32)),        # [n_faces, n_samples, 2]
-            sdf_vals=torch.from_numpy(S["sdf_faces"].astype(np.float32))      # [n_faces, n_samples]
-        )
+
+        return {
+            "name": file_name,
+            "vertices": torch.from_numpy(data["vertex"].astype(np.float32)),
+            "edges": torch.from_numpy(data["edge_features"].astype(np.float32)),
+            "faces": torch.from_numpy(data["face_features"].astype(np.float32)),
+            "edge_to_vertex": torch.from_numpy(data["edge_to_vertex"].astype(np.int64)),
+            "face_to_edge": torch.from_numpy(D["face_to_edge"][::-1].astype(np.int64)).t(),   # [2, n_f]
+            "face_to_face": torch.from_numpy(data["face_to_face"].astype(np.int64)),
+            "sdf_uv": uv.contiguous(),       # [n_faces, n_samples, 2]
+            "sdf_vals": vals.contiguous()      # [n_faces, n_samples]
+        }

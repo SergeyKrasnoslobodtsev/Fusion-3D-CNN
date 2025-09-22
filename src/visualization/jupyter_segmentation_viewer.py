@@ -11,9 +11,9 @@ from occwl.io import load_step
 class ColorMap:
     def __init__(self):
         self.color_values = [
-            [0, 0, 255],    # Blue (low)
-            [0, 255, 0],    # Green (mid)
-            [255, 0, 0],    # Red (high)
+            [255, 0, 0],  # Blue
+            [0, 255, 0],  # Green
+            [0, 0,255]    # Red
         ]
 
     def interpolate_value(self, a, b, t):
@@ -95,31 +95,7 @@ class JupyterSegmentationViewer:
         return '#%02x%02x%02x' % (c[0], c[1], c[2])
 
     def load_step(self):
-        # step_filename = self.step_folder / (self.file_stem + ".step")
-        # if not step_filename.exists():
-        #     step_filename = self.step_folder / (self.file_stem + ".stp")
-        # assert step_filename.exists()
         return load_step(self.file_path)
-
-    # def load_segmentation(self):
-    #     """
-    #     Load the seg file
-    #     """
-    #     assert not self.seg_folder is None,  "Must create this object specifying seg_folder"
-    #     assert self.seg_folder.exists(), "The segmentation folder provided doesnt exist"
-
-    #     seg_pathname = self.seg_folder / (self.file_stem + ".seg")
-    #     return np.loadtxt(seg_pathname, dtype=np.uint64)
-
-
-    # def load_logits(self):
-    #     """
-    #     Load logits file
-    #     """
-    #     assert not self.logit_folder is None,  "Must create this object specifying logit_folder"
-    #     assert self.logit_folder.exists(), "The logit folder provided doesnt exist"
-    #     logit_pathname = self.logit_folder / (self.file_stem + ".logits")
-    #     return np.loadtxt(logit_pathname)
 
     def select_face_callback(self, face):
         """
@@ -150,58 +126,11 @@ class JupyterSegmentationViewer:
             quality=1.0
         )
 
-
-    # def view_segmentation(self):
-    #     """
-    #     View the initial segmentation of this file
-    #     """
-    #     face_segmentation = self.load_segmentation()
-    #     self._view_segmentation(face_segmentation)
-
-
-    # def view_predicted_segmentation(self):
-    #     """
-    #     View the segmentation predicted by the network
-    #     """
-    #     logits = self.load_logits()
-    #     face_segmentation = np.argmax(logits, axis=1)
-    #     self._view_segmentation(face_segmentation)
-
-
-    # def view_errors_in_segmentation(self):
-    #     """
-    #     View faces which are correct in green and incorrect in red
-    #     """
-    #     face_segmentation = self.load_segmentation()
-    #     logits = self.load_logits()
-    #     predicted_segmentation = np.argmax(logits, axis=1)
-    #     correct_faces = (face_segmentation == predicted_segmentation)
-    #     correct_color = self.format_color([0, 255, 0])
-    #     incorrect_color = self.format_color([255, 0, 0])
-    #     colors = []
-    #     for prediction in correct_faces:
-    #         if prediction:
-    #             colors.append(correct_color)
-    #         else:
-    #             colors.append(incorrect_color)
-    #     self._display_faces_with_colors(self.solid.faces(), colors)
-
-    # def view_faces_for_segment(self, segment_index, threshold):
-    #     logits = self.load_logits()
-    #     logits_for_segment = logits[:,segment_index]
-    #     faces_of_segment = logits_for_segment > threshold
-    #     highlighted_color = self.format_color([0, 255, 0])
-    #     other_color = self.format_color([156, 152, 143])
-    #     colors = []
-    #     for prediction in faces_of_segment:
-    #         if prediction:
-    #             colors.append(highlighted_color)
-    #         else:
-    #             colors.append(other_color)
-    #     self._display_faces_with_colors(self.solid.faces(), colors)
-
     
     def highlight_faces_with_indices(self, indices):
+        """
+         Подсветить грани с заданными индексами
+        """
         indices = set(indices)
 
         highlighted_color = self.format_color([0, 255, 0])

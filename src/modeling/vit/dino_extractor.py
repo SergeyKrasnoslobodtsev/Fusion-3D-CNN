@@ -46,8 +46,8 @@ def worker(args):
 # Команда для запуска python -m src.modeling.vit.dino_extractor
 @app.command()
 def run(
-    images_dir: Path = typer.Option(PROCESSED_DATA_DIR / "dataset_129" / '2D', help="Путь к директориям с 2D изображениями"),
-    model_name: str = typer.Option("dinov2_vitb14", help="Название модели DINO"),
+    images_dir: Path = typer.Option(PROCESSED_DATA_DIR / "dataset_129" / '2D_v0', help="Путь к директориям с 2D изображениями"),
+    model_name: str = typer.Option("dinov2_vits14", help="Название модели DINO"),
     image_size: int = typer.Option(224, help="Размер изображений для модели"),
     num_workers: int = typer.Option(1, help="Количество рабочих процессов для извлечения признаков"),
     force_regeneration: bool = typer.Option(False, help="Перегенерировать признаки, даже если они уже существуют"),

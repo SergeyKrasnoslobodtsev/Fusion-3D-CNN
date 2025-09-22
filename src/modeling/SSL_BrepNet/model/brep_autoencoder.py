@@ -58,7 +58,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
                  queue_size: int = 4096,
                  w_rec: float = 1.0, 
                  w_con: float = 1.0, 
-                 points_per_face: int = 128
+                 points_per_face: int = 500
                  ):
         super().__init__()
         self.encoder = CustomBRepEncoder(
@@ -151,7 +151,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
             z_faces_k = self.encoder_m(batch_aug)      # [F, D]
             z_faces_k = torch.nan_to_num(z_faces_k)
             if z_faces_k.size(0) == 0:
-                # ключ пуст → тоже пропускаем пример
+                # ключ пуст тоже пропускаем пример
                 zero = torch.zeros((), device=self.device)
                 return zero, zero, zero
 
@@ -179,8 +179,8 @@ class BRepAutoEncoderModule(pl.LightningModule):
         sampled_points = batch['sdf_uv']      # [F, S, 2]
         sampled_sdf   = batch['sdf_vals'] 
         # уменьшаем количество точек в 2 раза, чтобы не закипел VRAM
-        sampled_points = sampled_points[:, ::2, :].contiguous()
-        sampled_sdf    = sampled_sdf[:, ::2].contiguous()    # [F, S]
+        # sampled_points = sampled_points[:, ::2, :].contiguous()
+        # sampled_sdf    = sampled_sdf[:, ::2].contiguous()    # [F, S]
         
         num_faces = sampled_points.shape[0]
         if num_faces == 0:

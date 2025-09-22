@@ -39,10 +39,10 @@ class BRepNetEmbeddingExtractor:
     def extract_from_npz(self, npz_path: Path, pool: str = "mean") -> tuple[torch.Tensor, torch.Tensor]:
         """Возвращает (face_embeds [Nf, D], model_embed [D])"""
         T = self.tensors_from_npz(npz_path)
-        face_embeds = self.extract_face_embeddings( # type: ignore
-            T["Xf"], T["Gf"], T["Xe"], T["Ge"], T["Xc"], T["Gc"], # types: ignore
-            T["Kf"], T["Ke"], T["Kc"], T["Ce"], T["Cf"], T["Csf"]  # types: ignore
-        )  # [num_faces, D] # type: ignore
+        face_embeds = self.extract_face_embeddings( 
+            T["Xf"], T["Gf"], T["Xe"], T["Ge"], T["Xc"], T["Gc"], 
+            T["Kf"], T["Ke"], T["Kc"], T["Ce"], T["Cf"], T["Csf"]  
+        )  # [num_faces, D]
         # Глобальный вектор модели (простой вариант: mean + L2-нормировка)
         if pool == "max":
             z = face_embeds.max(dim=0).values
@@ -191,7 +191,7 @@ class BRepNetEmbeddingExtractor:
             Xf=Xf, Xe=Xe, Xc=Xc,
             Gf=Gf, Ge=Ge, Gc=Gc,
             Kf=Kf, Ke=Ke, Kc=Kc,
-            Ce=Ce, Cf=Cf, Csf=Csf
+            Ce=Ce, Cf=Cf, Csf=torch.tensor(Csf, dtype=torch.int64, device=device) if isinstance(Csf, list) else Csf
         )
 
     def _load_standardization(self, path: Path) -> Dict[str, Any]:

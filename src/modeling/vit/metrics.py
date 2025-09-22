@@ -7,7 +7,7 @@ def l2norm(x: np.ndarray, axis: int = -1, eps: float = 1e-9) -> np.ndarray:
     return x / np.clip(n, eps, None)
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    return l2norm(a) @ l2norm(b).T  # (Na, D) x (D, Nb) -> (Na, Nb)
+    return a @ b.T  # (Na, D) x (D, Nb) -> (Na, Nb)
 
 def object_id_from_path(p: Path) -> str:
     # gj 

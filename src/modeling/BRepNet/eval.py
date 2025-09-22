@@ -36,20 +36,15 @@ class BRepNetEmbeddingExtractor:
         self.model.eval()
         
 
-    def extract_from_npz(self, npz_path: Path, pool: str = "mean") -> tuple[torch.Tensor, torch.Tensor]:
+    def extract_from_npz(self, npz_path: Path):
         """Возвращает (face_embeds [Nf, D], model_embed [D])"""
         T = self.tensors_from_npz(npz_path)
         face_embeds = self.extract_face_embeddings( 
             T["Xf"], T["Gf"], T["Xe"], T["Ge"], T["Xc"], T["Gc"], 
             T["Kf"], T["Ke"], T["Kc"], T["Ce"], T["Cf"], T["Csf"]  
         )  # [num_faces, D]
-        # Глобальный вектор модели (простой вариант: mean + L2-нормировка)
-        if pool == "max":
-            z = face_embeds.max(dim=0).values
-        else:  # "mean"
-            z = face_embeds.mean(dim=0)
-        z = F.normalize(z, dim=0)
-        return face_embeds, z
+
+        return face_embeds
 
     def extract_face_embeddings(
         self,
@@ -182,17 +177,6 @@ class BRepNetEmbeddingExtractor:
             Kf=Kf, Ke=Ke, Kc=Kc,
             Ce=Ce, Cf=Cf, Csf=torch.tensor(Csf, dtype=torch.int64, device=device) if isinstance(Csf, list) else Csf
         )
-
-    # def _load_standardization(self, path: Path) -> Dict[str, Any]:
-    #     """Чтение JSON с 'feature_standardization' (mean/std) или 'feature_normalization' (min/max)."""
-    #     with open(path, "r", encoding="utf-8") as f:
-    #         data = json.load(f)
-    #     if "feature_standardization" in data:
-    #         return {"mode": "standardize", **data["feature_standardization"]}
-    #     if "feature_normalization" in data:
-    #         return {"mode": "normalize", **data["feature_normalization"]}
-    #     # Фолбэк — без преобразований
-    #     return {"mode": "none"}
 
     def _apply_stats(self, X: torch.Tensor, stats_block: list) -> torch.Tensor:
         mean = torch.tensor([f["mean"] for f in stats_block], dtype=X.dtype, device=X.device)

@@ -33,19 +33,17 @@ def run(
     
     logger.info(f"Найдено {len(brepnet_files)} файлов BRepNet")
     
-    out_face_dir = brepnet_dir / "embeddings_faces"
-    out_model_dir = brepnet_dir / "embeddings_models"
+    out_face_dir = brepnet_dir / "embeddings"
     out_face_dir.mkdir(exist_ok=True)
-    out_model_dir.mkdir(exist_ok=True)
 
     feats = np.load(brepnet_files[0])
     for k, v in feats.items():
         print(k, v.shape)
 
     for npz_path in tqdm(brepnet_files, desc="Извлечение эмбеддингов BRepNet"):
-        face_embs, model_emb = embedding_extractor.extract_from_npz(npz_path, pool="mean")
-        np.save(out_face_dir / (npz_path.stem + "_faces.npy"), face_embs.detach().cpu().numpy())
-        np.save(out_model_dir / (npz_path.stem + "_model.npy"), model_emb.detach().cpu().numpy())
+        face_embs = embedding_extractor.extract_from_npz(npz_path)
+        np.savetxt(out_face_dir / f"{npz_path.stem}.embeddings", face_embs.detach().cpu().numpy())
+        
     
     logger.success("Эмбеддинги BRepNet успешно извлечены и сохранены.")
 

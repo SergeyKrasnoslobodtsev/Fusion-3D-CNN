@@ -7,7 +7,15 @@ def _l2norm(x: np.ndarray, axis: int = -1, eps: float = 1e-9) -> np.ndarray:
     return x / np.clip(n, eps, None)
 
 def _cos(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    return _l2norm(a) @ _l2norm(b).T
+    return a @ b.T
+
+def _euclidean(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    # ||a-b||^2 = ||a||^2 + ||b||^2 - 2<a,b>
+    a2 = np.sum(a * a, axis=1, keepdims=True)  # (Na,1)
+    b2 = np.sum(b * b, axis=1, keepdims=True)  # (Nb,1)
+    ab = a @ b.T                              # (Na,Nb)
+    d2 = a2 + b2.T - 2 * ab                    # (Na,Nb)
+    return np.sqrt(np.clip(d2, 0.0, None))     # (Na,Nb)
 
 def _recall_at_k(ranks: List[int], K: int) -> float:
     return float(np.mean([r <= K for r in ranks])) if ranks else 0.0
@@ -32,9 +40,8 @@ def _cohens_d(pos: np.ndarray, neg: np.ndarray) -> float:
     return float((m1 - m2) / (s_p + 1e-9))
 
 def evaluate_brepnet_faces_object_max(
-    faces_dir: Path,
-    model_dir: Path,
-    Ks=(1,5,10)
+    embeddings_dir: Path,
+    normalize: bool = True
 ) -> Dict[str, float]:
     """
     Query: каждая грань (face) объекта i — вектор f ∈ R^D.
@@ -42,25 +49,17 @@ def evaluate_brepnet_faces_object_max(
     Позитив: свой объект i. Ранг — позиция i среди всех объектов.
     """
     # загрузим модели и список имён
-    model_files = sorted(model_dir.glob("*_model.npy"))
-    names = [f.stem.replace("_model", "") for f in model_files]
-    name2idx = {n: k for k, n in enumerate(names)}
+    files = sorted(embeddings_dir.glob("*.embeddings"))
+    
 
     # проверим, что для каждого name есть faces
-    face_files = []
-    for n in names:
-        ff = faces_dir / f"{n}_faces.npy"
-        if not ff.exists():
-            raise FileNotFoundError(
-                f"Нет локальных эмбеддингов для '{n}': {ff} не найден. "
-                f"Экспортируй faces (F,D), чтобы посчитать метрики."
-            )
-        face_files.append(ff)
+    faces_list = []
+    for f in files:
+        E = np.loadtxt(f)
+        if E.ndim == 1:
+            E = E[None, :]
+        faces_list.append(_l2norm(E) if normalize else E)
 
-    # загрузим все лица по объектам
-    faces_list = [np.load(ff) for ff in face_files]       # список [ (F_i, D), ... ]
-    faces_list = [ _l2norm(F) for F in faces_list ]
-    # предвычислим "object-max" по каждому объекту для ускорения — просто оставим списком
 
     ranks = []
     pos_vals, neg_vals = [], []
@@ -72,7 +71,11 @@ def evaluate_brepnet_faces_object_max(
             scores = []
             for Fj in faces_list:
                 # max по всем лицам объекта j
-                s = _cos(q, Fj).max()
+                if normalize:
+                    s = _cos(q, Fj).max()
+                else:
+                    s = -_euclidean(q, Fj).min()
+
                 scores.append(s)
             scores = np.asarray(scores)  # (N,)
 

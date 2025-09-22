@@ -29,12 +29,8 @@ def _summin_euclid(Q: np.ndarray, T: np.ndarray) -> Tuple[float, np.ndarray, np.
 def search_topk(emb_dir: Path, query_stem: str, k: int = 20, exclude_self: bool = True):
     # собрать список файлов каталога
     files = sorted(emb_dir.glob("*.embeddings"))
-    if not files:
-        files = sorted(emb_dir.glob("*_faces.npy"))
-    if not files:
-        raise FileNotFoundError(f"В {emb_dir} нет *.embeddings или *_faces.npy")
 
-    stems = [f.stem.replace("_faces", "") for f in files]
+    stems = [f.stem for f in files]
 
     # загрузить запрос
     Q = _load_mat(_emb_path(emb_dir, query_stem))

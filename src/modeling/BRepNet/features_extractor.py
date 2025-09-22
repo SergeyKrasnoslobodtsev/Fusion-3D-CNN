@@ -10,6 +10,7 @@ from ...config import EXTERNAL_DATA_DIR, PROCESSED_DATA_DIR
 from ...utils.file_utils import get_files
 app = typer.Typer()
 
+# python -m src.modeling.BRepNet.features_extractor
 
 @app.command()
 def run(

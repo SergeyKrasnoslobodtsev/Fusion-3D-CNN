@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import json
 import torch.nn.functional as F
-from typing import Dict, Any
+from typing import Any
 
 from .model.brepnet import BRepNet
 
@@ -34,7 +34,7 @@ class BRepNetEmbeddingExtractor:
         ])
         self.model: BRepNet = BRepNet.load_from_checkpoint(str(checkpoint_path), opts=self.opts)
         self.model.eval()
-        self._std: Dict[str, Any] = self._load_standardization(Path(feature_standardization))
+        
 
     def extract_from_npz(self, npz_path: Path, pool: str = "mean") -> tuple[torch.Tensor, torch.Tensor]:
         """Возвращает (face_embeds [Nf, D], model_embed [D])"""
@@ -133,6 +133,7 @@ class BRepNetEmbeddingExtractor:
         # ---- 5) Kf/Ke/Kc: подгоняем размеры под kernel и заполняем "self" (+ next/mate для Kc) ----
         with open(self.opts.kernel, "r", encoding="utf-8") as fh:
             kernel_def = json.load(fh)
+        
         kf_cols = len(kernel_def["faces"])
         ke_cols = len(kernel_def["edges"])
         kc_cols = len(kernel_def["coedges"])
@@ -165,27 +166,15 @@ class BRepNetEmbeddingExtractor:
         Ke = to_i64(Ke_np)                               # [C, ke_cols]
         Kc = to_i64(Kc_np)                               # [C, kc_cols]
 
-        # ---- 6) Стандартизация табличных признаков (если задана) ----
-        def _apply_stats(t: torch.Tensor, stats: dict) -> torch.Tensor:
-            mean = torch.tensor(stats.get("mean"), dtype=torch.float32, device=device)
-            std  = torch.tensor(stats.get("std"),  dtype=torch.float32, device=device)
-            eps = 1e-8
-            return (t - mean) / (std + eps)
 
-        try:
-            with open(self.opts.dataset_file, "r", encoding="utf-8") as fh:
-                ds = json.load(fh)
-            stats = ds.get("feature_standardization") or ds.get("feature_normalization")
-        except Exception:
-            stats = None
+        with open(self.opts.dataset_file, "r", encoding="utf-8") as fh:
+            ds = json.load(fh)
+        stats = ds.get("feature_standardization") or ds.get("feature_normalization")
 
-        if isinstance(stats, dict):
-            if isinstance(stats["face_features"], list) and Xf.numel() > 0:
-                Xf = self._apply_stats(Xf, stats["face_features"])
-            if isinstance(stats["edge_features"], list) and Xe.numel() > 0:
-                Xe = self._apply_stats(Xe, stats["edge_features"])
-            if isinstance(stats["coedge_features"], list) and Xc.numel() > 0:
-                Xc = self._apply_stats(Xc, stats["coedge_features"])
+
+        Xf = self._apply_stats(Xf, stats["face_features"])
+        Xe = self._apply_stats(Xe, stats["edge_features"])
+        Xc = self._apply_stats(Xc, stats["coedge_features"])
 
         return dict(
             Xf=Xf, Xe=Xe, Xc=Xc,
@@ -194,19 +183,18 @@ class BRepNetEmbeddingExtractor:
             Ce=Ce, Cf=Cf, Csf=torch.tensor(Csf, dtype=torch.int64, device=device) if isinstance(Csf, list) else Csf
         )
 
-    def _load_standardization(self, path: Path) -> Dict[str, Any]:
-        """Чтение JSON с 'feature_standardization' (mean/std) или 'feature_normalization' (min/max)."""
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if "feature_standardization" in data:
-            return {"mode": "standardize", **data["feature_standardization"]}
-        if "feature_normalization" in data:
-            return {"mode": "normalize", **data["feature_normalization"]}
-        # Фолбэк — без преобразований
-        return {"mode": "none"}
+    # def _load_standardization(self, path: Path) -> Dict[str, Any]:
+    #     """Чтение JSON с 'feature_standardization' (mean/std) или 'feature_normalization' (min/max)."""
+    #     with open(path, "r", encoding="utf-8") as f:
+    #         data = json.load(f)
+    #     if "feature_standardization" in data:
+    #         return {"mode": "standardize", **data["feature_standardization"]}
+    #     if "feature_normalization" in data:
+    #         return {"mode": "normalize", **data["feature_normalization"]}
+    #     # Фолбэк — без преобразований
+    #     return {"mode": "none"}
 
     def _apply_stats(self, X: torch.Tensor, stats_block: list) -> torch.Tensor:
-        # stats_block: list of dicts with keys "mean" and "standard_deviation"
         mean = torch.tensor([f["mean"] for f in stats_block], dtype=X.dtype, device=X.device)
         std = torch.tensor([f["standard_deviation"] for f in stats_block], dtype=X.dtype, device=X.device)
         return (X - mean) / (std + 1e-8)

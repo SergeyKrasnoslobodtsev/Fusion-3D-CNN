@@ -104,9 +104,9 @@ class BRepAutoEncoderModule(pl.LightningModule):
     def _enqueue(self, k: torch.Tensor):
         # k: [D] или [1, D] — глобальный эмбеддинг ключа
         k = k.flatten()
-        ptr = int(self.queue_ptr)
-        self.z_queue[:, ptr] = k
-        self.queue_ptr[0] = (ptr + 1) % self.queue_size
+        ptr = int(self.queue_ptr) # type: ignore
+        self.z_queue[:, ptr] = k # type: ignore
+        self.queue_ptr[0] = (ptr + 1) % self.queue_size # type: ignore
 
     @staticmethod
     def _safe_mse(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
@@ -124,8 +124,8 @@ class BRepAutoEncoderModule(pl.LightningModule):
     
     def _common_step(self, batch):
         device = self.device
-        if isinstance(batch, (list, tuple)):
-            batch = batch[0]
+        # if isinstance(batch, (list, tuple)):
+        #     batch = batch[0]
 
         # ===== 2.1. Эмбеддинги лиц энкодером (query) =====
         z_faces_q = self.encoder(batch)                 # [F, D]
@@ -133,7 +133,9 @@ class BRepAutoEncoderModule(pl.LightningModule):
         if z_faces_q.size(0) == 0:
             # нет граней → пропускаем пример (нулевые лоссы)
             zero = torch.zeros((), device=self.device)
-            return zero, zero, zero
+            dummy_logits = torch.zeros((1, 1 + self.queue_size), device=self.device)
+            dummy_fin_z = torch.tensor(1.0, device=self.device)
+            return zero, zero, zero, dummy_logits, dummy_fin_z
 
         z_faces_q = F.normalize(z_faces_q, dim=-1, eps=1e-6)
         z_q = F.normalize(z_faces_q.mean(dim=0), dim=0, eps=1e-6)  # [D]
@@ -143,7 +145,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
             self._momentum_update()
             batch_aug = {}
             for k, v in batch.items():
-                if torch.is_tensor(v) and v.dtype.is_floating_point:
+                if k in ["vertices", "sdf_uv"] and torch.is_tensor(v) and v.dtype.is_floating_point:
                     batch_aug[k] = (v + 0.01 * torch.randn_like(v)).to(device)
                 else:
                     batch_aug[k] = v
@@ -153,13 +155,15 @@ class BRepAutoEncoderModule(pl.LightningModule):
             if z_faces_k.size(0) == 0:
                 # ключ пуст тоже пропускаем пример
                 zero = torch.zeros((), device=self.device)
-                return zero, zero, zero
+                dummy_logits = torch.zeros((1, 1 + self.queue_size), device=self.device)
+                dummy_fin_z = torch.tensor(1.0, device=self.device)
+                return zero, zero, zero, dummy_logits, dummy_fin_z
 
             z_faces_k = F.normalize(z_faces_k, dim=-1, eps=1e-6)
             z_k = F.normalize(z_faces_k.mean(dim=0), dim=0, eps=1e-6)      # [D]
 
         # контраст: перед умножением — "чистим" очередь и сводим тип/девайс
-        queue = torch.nan_to_num(self.z_queue.detach()).to(z_q.device, dtype=z_q.dtype)
+        queue = torch.nan_to_num(self.z_queue.detach()).to(z_q.device, dtype=z_q.dtype) # type: ignore
         assert z_q.shape[0] == queue.shape[0], f"MoCo dim mismatch: z_q={z_q.shape}, queue={queue.shape}"
 
         l_pos = torch.matmul(z_q.unsqueeze(0), z_k.unsqueeze(1))   # [1,1]
@@ -167,15 +171,15 @@ class BRepAutoEncoderModule(pl.LightningModule):
 
         logits = torch.cat([l_pos, l_neg], dim=1) / self.tau
         # если вдруг прилетели NaN — «обнулим» вклад контраста в этот шаг
-        if not torch.isfinite(logits).all():
-            loss_con = torch.zeros((), device=logits.device)
-        else:
-            labels = torch.zeros(1, dtype=torch.long, device=logits.device)
-            loss_con = F.cross_entropy(logits, labels)
+        # if not torch.isfinite(logits).all():
+        #     loss_con = torch.zeros((), device=logits.device)
+        # else:
+        labels = torch.zeros(1, dtype=torch.long, device=logits.device)
+        loss_con = F.cross_entropy(logits, labels)
 
         self._enqueue(z_k.detach())
 
-        # ===== 2.4. Реконструктив — как у тебя, по всем лицам =====
+
         sampled_points = batch['sdf_uv']      # [F, S, 2]
         sampled_sdf   = batch['sdf_vals'] 
         # уменьшаем количество точек в 2 раза, чтобы не закипел VRAM
@@ -185,7 +189,9 @@ class BRepAutoEncoderModule(pl.LightningModule):
         num_faces = sampled_points.shape[0]
         if num_faces == 0:
             # пустая геометрия — только контраст
-            return self.w_con * loss_con, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+            dummy_logits = torch.zeros((1, 1 + self.queue_size), device=device)
+            dummy_fin_z = torch.tensor(1.0, device=device)
+            return self.w_con * loss_con, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), dummy_logits, dummy_fin_z
 
         total_loss_rec = torch.zeros((), device=device)
         total_xyz_loss = torch.zeros((), device=device)
@@ -194,7 +200,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
         for i in range(num_faces):
             uv  = torch.nan_to_num(sampled_points[i]).to(device).float()
             sdf = torch.nan_to_num(sampled_sdf[i]).to(device).float()
-            emb_face = torch.nan_to_num(z_faces_q[i]).float()  # !!! используем query-эмбеддинг лиц
+            emb_face = torch.nan_to_num(z_faces_q[i]).float()  
 
             pred = torch.nan_to_num(self.decoder(uv, emb_face))      # [S, 4]
             target_xyz = self.compute_xyz_from_uv(uv).float()
@@ -206,14 +212,14 @@ class BRepAutoEncoderModule(pl.LightningModule):
             total_sdf_loss += sdf_loss
             total_loss_rec += xyz_loss + sdf_loss
             # по факту первые 6 граней - это уже само тело остальные - это вырезы
-            if i == 6:
-                break  # ограничим первыми гранями для экономии VRAM
+            # if i == 6:
+            #     break  # ограничим первыми гранями для экономии VRAM
 
         avg_xyz_loss = total_xyz_loss / num_faces
         avg_sdf_loss = total_sdf_loss / num_faces
         loss_rec = total_loss_rec / num_faces
 
-        # ===== 2.5. Совместный лосс =====
+
         loss_total = self.w_rec * loss_rec + self.w_con * loss_con
         return loss_total, avg_xyz_loss, avg_sdf_loss, logits.detach(), finite_ratio(z_faces_q).detach()
 
@@ -244,7 +250,7 @@ class BRepAutoEncoderModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, xyz_mse, sdf_mse, logits, fin_z = self._common_step(batch)
+        loss, xyz_mse, sdf_mse, logits, fin_z = self._common_step(batch) 
         self.log('val_loss', loss, prog_bar=True, batch_size=1)
         self.log('val_xyz_loss', xyz_mse, batch_size=1)
         self.log('val_sdf_loss', sdf_mse, batch_size=1)

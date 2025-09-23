@@ -63,22 +63,22 @@ def eval_object_max(files: List[Path], load_fn) -> Dict[str, float]:
 
         total_queries += num_query_faces
 
-        for v in range(num_query_faces):
-            q = Fi[v:v+1, :]
-            scores = []
-            for j in range(N):
-                Fj = feats_list[j]
-                sim_values = cosine_sim(q, Fj)
-                s = sim_values.max() if sim_values.size > 0 else -1.0
-                scores.append(s)
-            scores = np.asarray(scores)
+        q = feats_list[i].reshape(1, -1)
+        # q = Fi[v:v+1, :]
+        scores = []
+        for j in range(N):
+            Fj = feats_list[j]
+            sim_values = cosine_sim(q, Fj)
+            s = sim_values.max() if sim_values.size > 0 else -1.0
+            scores.append(s)
+        scores = np.asarray(scores)
 
-            pos_vals.append(scores[i])
-            neg_vals.extend(np.delete(scores, i))
+        pos_vals.append(scores[i])
+        neg_vals.extend(np.delete(scores, i))
 
-            order = np.argsort(-scores)
-            rank = int(np.where(order == i)[0][0]) + 1
-            ranks.append(rank)
+        order = np.argsort(-scores)
+        rank = int(np.where(order == i)[0][0]) + 1
+        ranks.append(rank)
 
     # Приводим словарь к требуемому формату
     metrics = {

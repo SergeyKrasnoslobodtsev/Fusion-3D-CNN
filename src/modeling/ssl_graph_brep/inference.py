@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 from pathlib import Path
 import numpy as np
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torch_geometric.nn import global_mean_pool, global_max_pool
 
@@ -29,7 +30,7 @@ def extract_embeddings(
         z = model._embed(data)  # {'coedge': [NC,Dc], 'face': [NF,Df], ...}
         co_batch = torch.zeros(z["coedge"].size(0), dtype=torch.long, device=device)
         fa_batch = torch.zeros(z["face"].size(0),   dtype=torch.long, device=device)
-        g = _pool_model_embedding(z["coedge"], z["face"], co_batch, fa_batch)  # [1,D]
+        g = _pool_model_embedding_balanced(z["coedge"], z["face"], co_batch, fa_batch)  # [1,D]
         embs.append(g.squeeze(0).cpu().numpy())
         ids.append(ds.files[i].stem)  # имена файлов как идентификаторы
     E = np.stack(embs).astype("float32")  # [N,D]
@@ -72,15 +73,35 @@ def topk_similar(E: np.ndarray, k: int = 10, include_self: bool = True) -> np.nd
     row_sort = np.argsort(-S[np.arange(S.shape[0])[:, None], topk_idx], axis=1) # type: ignore
     return topk_idx[np.arange(S.shape[0])[:, None], row_sort]
 
-def _pool_model_embedding(
-    z_coedge: Tensor, z_face: Tensor,
+def _pool_model_embedding_balanced(
+    z_coedge: Tensor, z_face: Tensor, 
     co_batch: Tensor, fa_batch: Tensor
 ) -> Tensor:
-    zc_mean = global_mean_pool(z_coedge, co_batch)  # [B,Dc]
-    zc_max  = global_max_pool(z_coedge, co_batch)   # [B,Dc]
-    zf_mean = global_mean_pool(z_face,   fa_batch)  # [B,Df]
-    z = torch.cat([zc_mean, zc_max, zf_mean], dim=1)  # [B,2*Dc+Df]
+    """
+    Сбалансированная агрегация с меньшей размерностью
+    """
+    # Coedge pooling
+    zc_mean = global_mean_pool(z_coedge, co_batch)  # [B, hidden]
+    zc_max = global_max_pool(z_coedge, co_batch)    # [B, hidden]
+    
+    # Face pooling  
+    zf_mean = global_mean_pool(z_face, fa_batch)    # [B, hidden]
+    
+    # Сжатие размерности через проекции
+    target_dim = 256  # Намного меньше чем 1536!
+    
+    coedge_combined = 0.7 * zc_mean + 0.3 * zc_max  # [B, hidden]
+    
+    # Проекции в меньшую размерность
+    coedge_proj = nn.functional.linear(coedge_combined, 
+                                     torch.randn(target_dim//2, coedge_combined.size(-1)))
+    face_proj = nn.functional.linear(zf_mean,
+                                   torch.randn(target_dim//2, zf_mean.size(-1)))
+    
+    # Финальное объединение
+    z = torch.cat([coedge_proj, face_proj], dim=1)  # [B, target_dim]
     z = torch.nn.functional.normalize(z, dim=-1)
+    
     return z  # [B, D]
 
 def _cosine_similarity_matrix(E: np.ndarray) -> np.ndarray:
@@ -101,25 +122,81 @@ def _find_query_indices(ids: List[str], query: str, case_insensitive: bool = Tru
             hits.append(i)
     return hits
 
-def _rank_all_by_query(
-    ids: List[str],
-    E: np.ndarray,
-    query_idx: int,
-    include_self: bool = True,
-) -> List[Tuple[int, float, str]]:
+def _euclidean_similarity_matrix(E: np.ndarray, method: str = 'exp') -> np.ndarray:
     """
-    Ранжирует все объекты датасета по косинусной схожести с указанным query_idx.
-    Возвращает список (rank, similarity, name) для всего набора.
+    Матрица сходства на основе евклидова расстояния.
+    method: 'exp' (экспоненциальное затухание) или 'inverse' (обратное расстояние)
     """
-    assert 0 <= query_idx < len(ids)
-    s = (E[query_idx:query_idx+1] @ E.T).ravel()            # [N]
+    n = E.shape[0]
+    
+    # Векторизованное вычисление всех попарных расстояний
+    # Broadcasting: E[None,:,:] - E[:,None,:] -> [n,n,d]
+    diff = E[None, :, :] - E[:, None, :]  # [n, n, d]
+    distances = np.linalg.norm(diff, axis=2)  # [n, n]
+    
+    if method == 'exp':
+        # Адаптивная сигма на основе медианного расстояния
+        sigma = np.median(distances[distances > 0])
+        similarity = np.exp(-distances / sigma)
+    elif method == 'inverse':
+        similarity = 1 / (1 + distances)
+    else:
+        raise ValueError("method должен быть 'exp' или 'inverse'")
+    
+    return similarity
+
+# Замените в функциях поиска:
+def _rank_all_by_query(ids, E, query_idx, include_self=True):
+    # Старый способ:
+    # s = (E[query_idx:query_idx+1] @ E.T).ravel()
+    
+    # Новый способ:
+    S = _euclidean_similarity_matrix(E)
+    s = S[query_idx]
+    
     if not include_self:
         s[query_idx] = -1.0
-    order = np.argsort(-s)                                  # type: ignore
-    out: List[Tuple[int, float, str]] = []
+    order = np.argsort(-s)
+    
+    out = []
     for rank, j in enumerate(order, start=1):
         sim = float(s[j])
         out.append((rank, sim, ids[j]))
     return out
+
+def analyze_embedding_distribution(ids: List[str], E: np.ndarray):
+    """Анализ распределения сходств для диагностики"""
+    
+    print("🔍 ДИАГНОСТИКА КАЧЕСТВА ЭМБЕДДИНГОВ")
+    print("="*50)
+    
+    # Косинусное сходство (текущее)
+    S_cos = E @ E.T
+    np.fill_diagonal(S_cos, 0)
+    
+    # Евклидово сходство  
+    S_eucl = _euclidean_similarity_matrix(E)
+    np.fill_diagonal(S_eucl, 0)
+    
+    print(f"\n📊 КОСИНУСНОЕ СХОДСТВО:")
+    print(f"   Среднее: {S_cos.mean():.4f}")
+    print(f"   Медиана: {np.median(S_cos):.4f}")  
+    print(f"   Стд.откл: {S_cos.std():.4f}")
+    print(f"   Диапазон: [{S_cos.min():.4f}, {S_cos.max():.4f}]")
+    
+    print(f"\n📏 ЕВКЛИДОВО СХОДСТВО:")
+    print(f"   Среднее: {S_eucl.mean():.4f}")
+    print(f"   Медиана: {np.median(S_eucl):.4f}")
+    print(f"   Стд.откл: {S_eucl.std():.4f}")
+    print(f"   Диапазон: [{S_eucl.min():.4f}, {S_eucl.max():.4f}]")
+    
+    # Анализ высокосходных пар
+    high_cos = np.sum(S_cos > 0.98) / 2  # Делим на 2 (симметричная матрица)
+    high_eucl = np.sum(S_eucl > 0.90) / 2
+    total_pairs = len(ids) * (len(ids) - 1) / 2
+    
+    print(f"\n⚠️  КОНЦЕНТРАЦИЯ ВЫСОКОГО СХОДСТВА:")
+    print(f"   Косинус >0.98: {high_cos}/{total_pairs:.0f} ({100*high_cos/total_pairs:.1f}%)")
+    print(f"   Евклид >0.90: {high_eucl}/{total_pairs:.0f} ({100*high_eucl/total_pairs:.1f}%)")
 
 

@@ -10,7 +10,7 @@ from .gnn import BRepHeteroGNN, AttnReadout
 from ..transforms.coedge_lcs import CoedgeLCSNormalize
 from ..losses.topo_pointer import BilinearScorer, build_target_from_edge_index, graph_pointer_ce
 from ..utils.batch_utils import num_graphs_in_batch
-from ..augment import dropout_attrs, two_views
+from ..augment import two_views_corrected
 
 class SSLBRepModule(pl.LightningModule):
     """
@@ -53,7 +53,7 @@ class SSLBRepModule(pl.LightningModule):
         self.lambda_topo_mate = lambda_topo_mate
         self.lambda_topo_next = lambda_topo_next
         self.aug_p = float(aug_p)  
-        self.gamma_model = 1.0 # вес для контраста модели
+        self.gamma_model = 3.0 # вес для контраста модели
         self.save_hyperparameters() 
 
     # ===== общие подфункции =====
@@ -99,7 +99,7 @@ class SSLBRepModule(pl.LightningModule):
 
     def training_step(self, batch: HeteroData, _: int) -> Tensor:
         
-        v1, v2 = two_views(batch, p=self.aug_p)
+        v1, v2 = two_views_corrected(batch, p=self.aug_p)
 
         
         z1d = self._embed(v1)
@@ -142,8 +142,10 @@ class SSLBRepModule(pl.LightningModule):
             z1d["coedge"], co_batch1, tgt_mate, self.scorer_mate, temperature=self.topo_tau
         )
 
-        loss = loss_c + self.lambda_topo_next * loss_next + \
-               self.lambda_topo_mate * loss_mate + self.gamma_model * loss_model
+        loss = (loss_c + 
+                self.lambda_topo_next * loss_next + 
+                self.lambda_topo_mate * loss_mate + 
+                self.gamma_model * loss_model) 
 
         # loss = (
         
@@ -171,7 +173,7 @@ class SSLBRepModule(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self, batch: HeteroData, _: int) -> None:
         # Аугментации: такие же, как в train (или p=0.0 для «чистой» оценки)
-        v1, v2 = two_views(batch, p=0.0)
+        v1, v2 = batch.clone(), batch.clone()
         
         z1d = self._embed(v1)
         z2d = self._embed(v2)
@@ -213,8 +215,10 @@ class SSLBRepModule(pl.LightningModule):
             z1d["coedge"], co_batch1, tgt_mate, self.scorer_mate, temperature=self.topo_tau
         )
 
-        loss = loss_c + self.lambda_topo_next * loss_next + \
-               self.lambda_topo_mate * loss_mate + self.gamma_model * loss_model
+        loss = (loss_c + 
+                self.lambda_topo_next * loss_next + 
+                self.lambda_topo_mate * loss_mate + 
+                self.gamma_model * loss_model) 
 
         bsz = num_graphs_in_batch(batch)
         self.log_dict({

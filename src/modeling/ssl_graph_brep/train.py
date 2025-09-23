@@ -3,6 +3,8 @@ import typer
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.callbacks import EarlyStopping
+
 
 from ..ssl_graph_brep.models.ssl_brep import SSLBRepModule
 from ..ssl_graph_brep.data_module.brep_data_loader import BRepDataModule
@@ -28,6 +30,7 @@ def run(
     weight_decay: float = typer.Option(1e-4, help="Вес L2-регуляризации"),
     validation_ratio: float = typer.Option(0.1, help="Доля валидационного сета"),
     test_ratio: float = typer.Option(0.1, help="Доля тестового сета"),
+    gradient_clip_val: float = typer.Option(0.5, help="Максимальная норма градиента"),
     ):
 
     csv_logger = CSVLogger(save_dir=REPORTS_DIR, name="ssl_brep")
@@ -61,11 +64,18 @@ def run(
         dirpath=MODELS_DIR / "ssl_brep",
         filename="ssl-brep-{epoch:02d}-{val_infoNCE_acc:.3f}"
     )
+    early_stop = EarlyStopping(
+        monitor="val_infoNCE_acc",
+        patience=10,
+        mode="max",
+        verbose=True
+    )
+
     trainer = pl.Trainer(
         max_epochs=epochs,
-        gradient_clip_val=1.0,
+        gradient_clip_val=gradient_clip_val,
         gradient_clip_algorithm="norm",
-        callbacks=[ckpt], 
+        callbacks=[ckpt, early_stop], 
         logger=[csv_logger], 
         log_every_n_steps=10)
 

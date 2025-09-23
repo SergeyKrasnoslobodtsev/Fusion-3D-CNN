@@ -48,6 +48,39 @@ def dropout_attrs(data: HeteroData, p: float = 0.1) -> HeteroData:
     out["coedge"].grid = grid.masked_fill(mask, 0.0)
     return out
 
+import torch
+
+def random_rotate_grid(grid: torch.Tensor) -> torch.Tensor:
+    # grid: [C, 12, 10] или [F, 7, 10, 10]
+    theta = torch.rand(1) * 2 * torch.pi
+    rot = torch.tensor([
+        [torch.cos(theta), -torch.sin(theta), 0],
+        [torch.sin(theta), torch.cos(theta), 0],
+        [0, 0, 1]
+    ], device=grid.device)
+    # Применяем к координатам (предположим, первые 3 канала — xyz)
+    grid[:, 0:3, :] = torch.matmul(rot, grid[:, 0:3, :])
+    return grid
+
+def strong_augment(data: HeteroData, p: float = 0.2) -> HeteroData:
+    out = data.clone()
+    if "uv" in out["face"]:
+        if torch.rand(1) < p:
+            out["face"].uv = random_rotate_grid(out["face"].uv)
+    if "grid" in out["coedge"]:
+        if torch.rand(1) < p:
+            out["coedge"].grid = random_rotate_grid(out["coedge"].grid)
+    # Dropout по признакам
+    if torch.rand(1) < p:
+        mask = torch.rand_like(out["face"].x) < 0.1
+        out["face"].x = out["face"].x * (~mask)
+    if torch.rand(1) < p:
+        mask = torch.rand_like(out["edge"].x) < 0.1
+        out["edge"].x = out["edge"].x * (~mask)
+    if torch.rand(1) < p:
+        mask = torch.rand_like(out["coedge"].x) < 0.1
+        out["coedge"].x = out["coedge"].x * (~mask)
+    return out
 
 def two_views(data: HeteroData, p: float = 0.1) -> Tuple[HeteroData, HeteroData]:
     """
@@ -70,46 +103,7 @@ def two_views(data: HeteroData, p: float = 0.1) -> Tuple[HeteroData, HeteroData]
         p2 = p * 0.5
 
     # Применяем dropout с вычисленными вероятностями
-    view1 = dropout_attrs(data, p=p1)
-    view2 = dropout_attrs(data, p=p2)
+    view1 = strong_augment(data, p=p1)
+    view2 = strong_augment(data, p=p2)
 
     return view1, view2
-
-
-
-
-# def get_main_shape(face_features): new data["face"].x
-#     is_plane = face_features[:, 0]
-#     is_cylinder = face_features[:, 1]
-#     is_cone = face_features[:, 2]
-#     is_sphere = face_features[:, 3]
-#     is_torus = face_features[:, 4]
-#     areas = face_features[:, 5]
-
-#     total_area = areas.sum()
-#     plane_area = areas[is_plane > 0.0].sum()
-#     cylinder_area = areas[is_cylinder > 0.0].sum()
-#     cone_area = areas[is_cone > 0.0].sum()  
-#     sphere_area = areas[is_sphere > 0.0].sum()
-#     torus_area = areas[is_torus > 0.0].sum()
-
-#     # Основная форма — по максимальной доле площади
-#     shape_areas = {
-#         "prismatic": plane_area, # плоские и призматические
-#         "cylindrical": cylinder_area, # цилиндрические
-#         "conical": cone_area, # конические
-#         "spherical": sphere_area, # сферические
-#         "toroidal": torus_area # тороидальные
-#     }
-#     main_shape = max(shape_areas, key=lambda k: shape_areas[k])
-#     if shape_areas[main_shape] / total_area < 0.5:
-#         return "mixed"
-#     return main_shape
-
-# # Для всего датасета
-# shape_labels = [get_main_shape(item['brepnet_features']) for item in dataset]
-
-# # Пример: вывести все цилиндрические детали
-# for idx, label in enumerate(shape_labels):
-#     if label == "prismatic":
-#         print(f"{idx}: {dataset[idx]['model_id']} | {label}")

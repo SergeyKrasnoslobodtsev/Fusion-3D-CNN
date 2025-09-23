@@ -4,18 +4,31 @@ import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
 
+class MLPScorer(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.ReLU(),
+            nn.Linear(dim, 1)
+        )
+        
+    def forward(self, z_i: Tensor, z_j: Tensor) -> Tensor:
+        # z_i: [N, D], z_j: [M, D] -> [N, M]
+        N, M = z_i.size(0), z_j.size(0)
+        zi_exp = z_i.unsqueeze(1).expand(N, M, -1)  # [N, M, D]  
+        zj_exp = z_j.unsqueeze(0).expand(N, M, -1)  # [N, M, D]
+        pairs = torch.cat([zi_exp, zj_exp], dim=-1)  # [N, M, 2D]
+        return self.mlp(pairs).squeeze(-1)  # [N, M]
 
 class BilinearScorer(nn.Module):
-    """
-    Билинейный скорер s(i,j)=zi^T W zj для коэджей, учит различать целевые next/mate среди узлов того же графа.
-    """
-    def __init__(self, dim: int) -> None:
+    def __init__(self, dim: int):
         super().__init__()
-        self.W = nn.Parameter(torch.eye(dim))
-
+        self.W = nn.Parameter(torch.randn(dim, dim) * 0.01)  
+        self.bias = nn.Parameter(torch.zeros(1))  
+        
     def forward(self, z_i: Tensor, z_j: Tensor) -> Tensor:
-        # z_i: [N, D], z_j: [M, D] -> scores: [N, M]
-        return z_i @ self.W @ z_j.t()
+        return z_i @ self.W @ z_j.t() + self.bias
 
 
 @torch.no_grad()

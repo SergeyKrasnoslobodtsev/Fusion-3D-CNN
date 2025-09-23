@@ -10,6 +10,7 @@ from .gnn import BRepHeteroGNN, AttnReadout
 from ..transforms.coedge_lcs import CoedgeLCSNormalize
 from ..losses.topo_pointer import BilinearScorer, build_target_from_edge_index, graph_pointer_ce
 from ..utils.batch_utils import num_graphs_in_batch
+from ..augment import dropout_attrs, two_views
 
 class SSLBRepModule(pl.LightningModule):
     """
@@ -81,7 +82,7 @@ class SSLBRepModule(pl.LightningModule):
 
         loss12 = nn.functional.cross_entropy(logits12, labels)
         loss21 = nn.functional.cross_entropy(logits21, labels)
-        return 0.5 * (loss12 + loss21), logits12
+        return 0.5 * (loss12 + loss21), logits12 # type: ignore
     
     def _contrastive_loss_model(self, z1_model: Tensor, z2_model: Tensor) -> tuple[Tensor, Tensor]:
         p1 = nn.functional.normalize(self.projector(z1_model), dim=-1)
@@ -95,26 +96,10 @@ class SSLBRepModule(pl.LightningModule):
         )
         return loss, logits12 
 
-    def _two_views_stable(self, batch, p: float):
-        # глубокая копия без изменения порядка/количества узлов
-        import copy
-        v1 = copy.deepcopy(batch)
-        v2 = copy.deepcopy(batch)
-        if p > 0.0 and self.training:
-            # легкий джиттер по фичам (xyz) в LCS; порядок и размеры НЕ трогаем
-            def _jitter_grid(g, sigma=0.01):
-                g[:, 0:3, :] = g[:, 0:3, :] + sigma * torch.randn_like(g[:, 0:3, :])
-                return g
-            v1["coedge"].grid = _jitter_grid(v1["coedge"].grid)
-            v2["coedge"].grid = _jitter_grid(v2["coedge"].grid)
-            # можно добавить очень мягкий noise для face.uv
-            v1["face"].uv = v1["face"].uv + 0.01 * torch.randn_like(v1["face"].uv)
-            v2["face"].uv = v2["face"].uv + 0.01 * torch.randn_like(v2["face"].uv)
-        return v1, v2
 
     def training_step(self, batch: HeteroData, _: int) -> Tensor:
         
-        v1, v2 = self._two_views_stable(batch, p=self.aug_p)
+        v1, v2 = two_views(batch, p=self.aug_p)
 
         
         z1d = self._embed(v1)
@@ -186,7 +171,7 @@ class SSLBRepModule(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self, batch: HeteroData, _: int) -> None:
         # Аугментации: такие же, как в train (или p=0.0 для «чистой» оценки)
-        v1, v2 = self._two_views_stable(batch, p=0.0)
+        v1, v2 = two_views(batch, p=0.0)
         
         z1d = self._embed(v1)
         z2d = self._embed(v2)
